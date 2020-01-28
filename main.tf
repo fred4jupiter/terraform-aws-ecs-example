@@ -64,17 +64,11 @@ resource "aws_internet_gateway" "igw" {
 }
 
 resource "aws_eip" "nat" {
-  tags {
-    Name = "nat-gw-eip"
-  }
 }
 
 resource "aws_nat_gateway" "nat_gw" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public1.id
-  tags {
-    Name = "nat-gw"
-  }
 }
 
 resource "aws_route_table" "rt-public" {
@@ -226,8 +220,8 @@ resource "aws_lb_target_group" "alb-tg" {
 # ECS---------------------------------------------------------------------------
 
 resource "aws_iam_role" "execution_role" {
-  name = "${var.name}-${var.environment}-exec-role"
-  description = "Execution role for ${var.name}-${var.environment}"
+  name               = "${var.name}-${var.environment}-exec-role"
+  description        = "Execution role for ${var.name}-${var.environment}"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
 
@@ -236,7 +230,7 @@ data "aws_iam_policy_document" "ecs_assume" {
     actions = ["sts:AssumeRole"]
 
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["ecs-tasks.amazonaws.com"]
     }
   }
@@ -251,7 +245,7 @@ resource "aws_iam_policy" "execution_policy" {
 
 data "aws_iam_policy_document" "execution_permission" {
   statement {
-    actions = ["*"]
+    actions   = ["*"]
     resources = ["*"]
   }
 }
