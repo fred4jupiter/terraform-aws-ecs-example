@@ -2,26 +2,84 @@ provider "aws" {
   region = "eu-central-1"
 }
 
-module "vpc" {
-  source             = "terraform-aws-modules/vpc/aws"
-  version            = "~> 2.21"
-  name               = "simple-vpc"
-  cidr               = "10.0.0.0/16"
-  azs                = ["eu-central-1a", "eu-central-1b"]
-  private_subnets    = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets     = ["10.0.101.0/24", "10.0.102.0/24"]
-  enable_nat_gateway = false
+data "aws_availability_zones" "available" {}
+
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.101.0/24"
+  availability_zone       = "eu-central-1a"
+  map_public_ip_on_launch = true
+
   tags = {
-    Owner = var.owner
+    Name = "public-1a"
   }
 }
 
-data "aws_subnet_ids" "private" {
-  vpc_id = module.vpc.vpc_id
+resource "aws_subnet" "private" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "eu-central-1a"
+  map_public_ip_on_launch = false
+
   tags = {
-    Name  = "*private*"
-    Owner = var.owner
+    Name = "private-1a"
   }
+}
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_route_table" "rt" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+}
+
+resource "aws_eip" "nat-eip" {
+}
+
+resource "aws_nat_gateway" "this" {
+  allocation_id = aws_eip.nat-eip.id
+  subnet_id     = aws_subnet.public.id
+}
+
+resource "aws_default_route_table" "private" {
+  default_route_table_id = aws_vpc.main.default_route_table_id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.this.id
+  }
+
+  tags = {
+    Name = "private routes"
+  }
+}
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "public routes"
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
 }
 
 module "alb" {
@@ -30,8 +88,8 @@ module "alb" {
   name_prefix        = "alb-example"
   load_balancer_type = "application"
   internal           = false
-  vpc_id             = module.vpc.vpc_id
-  subnets            = module.vpc.public_subnets
+  vpc_id             = aws_vpc.main.id
+  subnets            = [aws_subnet.public.id]
   tags = {
     Owner = var.owner
   }
@@ -57,9 +115,9 @@ module "ecs-fargate" {
   version = "~> 1.0"
 
   name_prefix                     = "ecs-fargate-example"
-  vpc_id                          = module.vpc.vpc_id
+  vpc_id                          = aws_vpc.main.id
   lb_arn                          = module.alb.arn
-  private_subnet_ids              = data.aws_subnet_ids.private.ids
+  private_subnet_ids              = [aws_subnet.private.id]
   cluster_id                      = aws_ecs_cluster.cluster.id
   task_container_image            = "fred4jupiter/fredbet:latest"
   task_definition_cpu             = 256
