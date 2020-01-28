@@ -1,5 +1,6 @@
 provider "aws" {
   region = "eu-central-1"
+  version = "~> 2.46"
 }
 
 data "aws_availability_zones" "available" {}
@@ -8,7 +9,7 @@ resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 }
 
-resource "aws_subnet" "public" {
+resource "aws_subnet" "public1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.101.0/24"
   availability_zone       = "eu-central-1a"
@@ -16,6 +17,17 @@ resource "aws_subnet" "public" {
 
   tags = {
     Name = "public-1a"
+  }
+}
+
+resource "aws_subnet" "public2" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.102.0/24"
+  availability_zone       = "eu-central-1b"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "public-1b"
   }
 }
 
@@ -34,7 +46,7 @@ resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 }
 
-resource "aws_route_table" "rt" {
+resource "aws_route_table" "rt-public" {
   vpc_id = aws_vpc.main.id
 
   route {
@@ -48,10 +60,13 @@ resource "aws_eip" "nat-eip" {
 
 resource "aws_nat_gateway" "this" {
   allocation_id = aws_eip.nat-eip.id
-  subnet_id     = aws_subnet.public.id
+  subnet_id     = aws_subnet.public1.id
+  tags = {
+    Name = "NAT-GW"
+  }
 }
 
-resource "aws_default_route_table" "private" {
+resource "aws_default_route_table" "rt-private" {
   default_route_table_id = aws_vpc.main.default_route_table_id
 
   route {
@@ -78,18 +93,20 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
+  subnet_id      = aws_subnet.public1.id
   route_table_id = aws_route_table.public.id
 }
+
+# -------------------------------------------------------------
 
 module "alb" {
   source             = "umotif-public/alb/aws"
   version            = "~> 1.0"
-  name_prefix        = "alb-example"
+  name_prefix        = "alb-fredbet"
   load_balancer_type = "application"
   internal           = false
   vpc_id             = aws_vpc.main.id
-  subnets            = [aws_subnet.public.id]
+  subnets            = [aws_subnet.public1.id, aws_subnet.public2.id]
   tags = {
     Owner = var.owner
   }
@@ -107,14 +124,14 @@ resource "aws_lb_listener" "alb_80" {
 }
 
 resource "aws_ecs_cluster" "cluster" {
-  name = "example-ecs-cluster"
+  name = "fredbet-ecs-cluster"
 }
 
 module "ecs-fargate" {
   source  = "umotif-public/ecs-fargate/aws"
-  version = "~> 1.0"
+  version = "~> 1.0.8"
 
-  name_prefix                     = "ecs-fargate-example"
+  name_prefix                     = "ecs-fargate"
   vpc_id                          = aws_vpc.main.id
   lb_arn                          = module.alb.arn
   private_subnet_ids              = [aws_subnet.private.id]
