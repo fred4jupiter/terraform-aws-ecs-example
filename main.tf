@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "eu-central-1"
+  region  = "eu-central-1"
   version = "~> 2.46"
 }
 
@@ -104,50 +104,160 @@ resource "aws_route_table_association" "private2" {
   route_table_id = aws_route_table.rt-private.id
 }
 
-# -------------------------------------------------------------
+# ALB -------------------------------------------------------------
 
-module "alb" {
-  source             = "umotif-public/alb/aws"
-  version            = "~> 1.1.0"
-  name_prefix        = "alb-fredbet"
-  load_balancer_type = "application"
-  internal           = false
-  vpc_id             = aws_vpc.main.id
-  subnets            = [aws_subnet.public1.id, aws_subnet.public2.id]
-
+resource "random_id" "logs_bucket_id" {
+  byte_length = 2
 }
 
-resource "aws_lb_listener" "alb_80" {
-  load_balancer_arn = module.alb.arn
+data "aws_elb_service_account" "this" {}
+
+data "aws_iam_policy_document" "s3_access_logs_permissions" {
+  statement {
+    actions   = ["s3:PutObject"]
+    resources = ["arn:aws:s3:::test-fredbet-alb-logs-${random_id.logs_bucket_id.dec}/ALB/*"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [data.aws_elb_service_account.this.arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket" "alb-logs" {
+  bucket = "alb-logs-fredbet"
+  acl    = "private"
+  policy = data.aws_iam_policy_document.s3_access_logs_permissions.json
+
+  tags = {
+    Name = "alb-logs-fredbet"
+  }
+}
+
+resource "aws_security_group" "alb-sg" {
+  name        = "alb-sg"
+  description = "security group for ALB"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_lb" "alb" {
+  name                       = "fredbet-alb"
+  internal                   = false
+  load_balancer_type         = "application"
+  security_groups            = [aws_security_group.alb-sg.id]
+  subnets                    = [aws_subnet.public1.id, aws_subnet.public2.id]
+  enable_deletion_protection = false
+
+  access_logs {
+    bucket  = aws_s3_bucket.alb-logs.id
+    prefix  = "ALB"
+    enabled = true
+  }
+
+  tags = {
+    Name = "alb-fredbet"
+  }
+}
+
+resource "aws_lb_listener" "alb-listener" {
+  load_balancer_arn = aws_lb.alb.arn
   port              = "80"
   protocol          = "HTTP"
 
   default_action {
     type             = "forward"
-    target_group_arn = module.ecs-fargate.target_group_arn
+    target_group_arn = aws_lb_target_group.alb-tg.arn
   }
 }
+
+resource "aws_lb_target_group" "alb-tg" {
+  name        = "alb-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  target_type = "ip"
+
+  health_check {
+    healthy_threshold   = "3"
+    interval            = "5"
+    protocol            = "HTTP"
+    matcher             = "200"
+    timeout             = "3"
+    path                = "/actuator/health"
+    unhealthy_threshold = "2"
+  }
+
+  stickiness {
+    type = "lb_cookie"
+  }
+  vpc_id = aws_vpc.main.id
+}
+
+# ECS---------------------------------------------------------------------------
 
 resource "aws_ecs_cluster" "cluster" {
   name = "fredbet-ecs-cluster"
 }
 
-module "ecs-fargate" {
-  source  = "umotif-public/ecs-fargate/aws"
-  version = "~> 1.0.8"
+resource "aws_security_group" "ecs_tasks-sg" {
+  vpc_id = aws_vpc.main.id
 
-  name_prefix                     = "ecs-fargate"
-  vpc_id                          = aws_vpc.main.id
-  lb_arn                          = module.alb.arn
-  private_subnet_ids              = [aws_subnet.private1.id, aws_subnet.private2.id]
-  cluster_id                      = aws_ecs_cluster.cluster.id
-  task_container_image            = "fred4jupiter/fredbet:latest"
-  task_definition_cpu             = 256
-  task_definition_memory          = 1024
-  task_container_port             = 8080
-  task_container_assign_public_ip = true
-  health_check = {
-    port = "traffic-port"
-    path = "/"
+  ingress {
+    description     = "Allow HTTP from load balancer"
+    protocol        = "tcp"
+    from_port       = 8080
+    to_port         = 8080
+    security_groups = [aws_security_group.alb-sg.id]
   }
+
+  tags = {
+    Name = "ecs_tasks-sg"
+  }
+}
+
+resource "aws_ecs_service" "fredbet-service" {
+  name                              = "fredbet-service"
+  cluster                           = aws_ecs_cluster.cluster.id
+  desired_count                     = 1
+  task_definition                   = aws_ecs_task_definition.fredbet-td.id
+  launch_type                       = "FARGATE"
+  health_check_grace_period_seconds = 30
+
+  network_configuration {
+    subnets          = [aws_subnet.private1.id, aws_subnet.private2.id]
+    security_groups  = [aws_security_group.ecs_tasks-sg.id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.alb-tg.id
+    container_name   = "fredbet"
+    container_port   = "8080"
+  }
+
+  depends_on = [aws_lb_listener.alb-listener]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_ecs_task_definition" "fredbet-td" {
+  container_definitions = file("task-definitions/service.json")
+  family                = "service"
+  volume {
+    name      = "service-storage"
+    host_path = "/ecs/service-storage"
+  }
+}
+
+data "aws_ecs_container_definition" "ecs-fredbet" {
+  task_definition = aws_ecs_task_definition.fredbet-td.id
+  container_name  = "fredbet"
 }
