@@ -5,8 +5,17 @@
     "essential": true,
     "portMappings": [
       {
-        "containerPort": 8080
+        "containerPort": 8080,
+        "protocol": "tcp"
       }
-    ]
+    ],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/ecs/fredbet-test",
+        "awslogs-region": "eu-central-1",
+        "awslogs-stream-prefix": "ecs"
+      }
+    }
   }
 ]

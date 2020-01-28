@@ -206,6 +206,47 @@ resource "aws_lb_target_group" "alb-tg" {
 
 # ECS---------------------------------------------------------------------------
 
+resource "aws_iam_role" "execution_role" {
+  name = "${var.name}-${var.environment}-exec-role"
+  description = "Execution role for ${var.name}-${var.environment}"
+  assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
+}
+
+data "aws_iam_policy_document" "ecs_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "execution_policy" {
+  name        = "${var.name}-${var.environment}-policy"
+  description = "Execution policy for ${var.name}-${var.environment}"
+
+  policy = data.aws_iam_policy_document.execution_permission.json
+}
+
+data "aws_iam_policy_document" "execution_permission" {
+  statement {
+    actions = ["*"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "test-attach" {
+  role       = aws_iam_role.execution_role.name
+  policy_arn = aws_iam_policy.execution_policy.arn
+}
+
+resource "aws_cloudwatch_log_group" "ecs_log_group" {
+  name              = "/ecs/${var.name}-${var.environment}"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_ecs_cluster" "cluster" {
   name = "fredbet-ecs-cluster"
 }
@@ -261,10 +302,14 @@ data "aws_ecs_container_definition" "ecs-fredbet" {
 
 resource "aws_ecs_task_definition" "fredbet-td" {
   container_definitions    = file("task-definitions/service.json")
+  execution_role_arn       = aws_iam_role.execution_role.arn
   family                   = "fredbet-task-def"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = "256"
   memory                   = "1024"
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
