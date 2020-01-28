@@ -125,9 +125,10 @@ data "aws_iam_policy_document" "s3_access_logs_permissions" {
 }
 
 resource "aws_s3_bucket" "alb-logs" {
-  bucket = "${var.environment}-${var.name}-logs-${random_id.logs_bucket_id.dec}"
-  acl    = "private"
-  policy = data.aws_iam_policy_document.s3_access_logs_permissions.json
+  bucket        = "${var.environment}-${var.name}-logs-${random_id.logs_bucket_id.dec}"
+  acl           = "private"
+  policy        = data.aws_iam_policy_document.s3_access_logs_permissions.json
+  force_destroy = true
 
   tags = {
     Name = "alb-logs-fredbet"
@@ -227,6 +228,7 @@ resource "aws_ecs_service" "fredbet-service" {
   desired_count                     = 1
   task_definition                   = aws_ecs_task_definition.fredbet-td.id
   health_check_grace_period_seconds = 30
+  launch_type                       = "FARGATE"
 
   network_configuration {
     subnets          = [aws_subnet.private1.id, aws_subnet.private2.id]
@@ -247,18 +249,17 @@ resource "aws_ecs_service" "fredbet-service" {
   }
 }
 
-resource "aws_ecs_task_definition" "fredbet-td" {
-  container_definitions = file("task-definitions/service.json")
-  family                = "fredbet-task-def"
-  requires_compatibilities = ["FARGATE"]
-  network_mode = "awsvpc"
-  volume {
-    name      = "service-storage"
-    host_path = "/ecs/service-storage"
-  }
-}
-
 data "aws_ecs_container_definition" "ecs-fredbet" {
   task_definition = aws_ecs_task_definition.fredbet-td.id
   container_name  = "fredbet"
 }
+
+resource "aws_ecs_task_definition" "fredbet-td" {
+  container_definitions    = file("task-definitions/service.json")
+  family                   = "fredbet-task-def"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "1024"
+}
+
