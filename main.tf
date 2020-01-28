@@ -115,7 +115,7 @@ data "aws_elb_service_account" "this" {}
 data "aws_iam_policy_document" "s3_access_logs_permissions" {
   statement {
     actions   = ["s3:PutObject"]
-    resources = ["arn:aws:s3:::test-fredbet-alb-logs-${random_id.logs_bucket_id.dec}/ALB/*"]
+    resources = ["arn:aws:s3:::${var.environment}-${var.name}-logs-${random_id.logs_bucket_id.dec}/ALB/*"]
 
     principals {
       type        = "AWS"
@@ -125,7 +125,7 @@ data "aws_iam_policy_document" "s3_access_logs_permissions" {
 }
 
 resource "aws_s3_bucket" "alb-logs" {
-  bucket = "alb-logs-fredbet"
+  bucket = "${var.environment}-${var.name}-logs-${random_id.logs_bucket_id.dec}"
   acl    = "private"
   policy = data.aws_iam_policy_document.s3_access_logs_permissions.json
 
@@ -226,7 +226,6 @@ resource "aws_ecs_service" "fredbet-service" {
   cluster                           = aws_ecs_cluster.cluster.id
   desired_count                     = 1
   task_definition                   = aws_ecs_task_definition.fredbet-td.id
-  launch_type                       = "FARGATE"
   health_check_grace_period_seconds = 30
 
   network_configuration {
@@ -250,7 +249,9 @@ resource "aws_ecs_service" "fredbet-service" {
 
 resource "aws_ecs_task_definition" "fredbet-td" {
   container_definitions = file("task-definitions/service.json")
-  family                = "service"
+  family                = "fredbet-task-def"
+  requires_compatibilities = ["FARGATE"]
+  network_mode = "awsvpc"
   volume {
     name      = "service-storage"
     host_path = "/ecs/service-storage"
