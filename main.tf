@@ -146,6 +146,10 @@ resource "aws_security_group" "alb-sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "alb-sg"
+  }
 }
 
 resource "aws_lb" "alb" {
@@ -207,6 +211,7 @@ resource "aws_ecs_cluster" "cluster" {
 }
 
 resource "aws_security_group" "ecs_tasks-sg" {
+  name   = "ecs_tasks-sg"
   vpc_id = aws_vpc.main.id
 
   ingress {
