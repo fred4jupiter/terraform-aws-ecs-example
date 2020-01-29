@@ -227,6 +227,31 @@ resource "aws_lb_target_group" "alb-tg" {
 
 # ECS---------------------------------------------------------------------------
 
+resource "aws_iam_role" "svc" {
+  name = "${var.name}-ecs-role"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2008-10-17",
+  "Statement": [
+	{
+	  "Sid": "",
+	  "Effect": "Allow",
+	  "Principal": {
+		"Service": "ecs.amazonaws.com"
+	  },
+	  "Action": "sts:AssumeRole"
+	}
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "svc" {
+  role       = aws_iam_role.svc.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole"
+}
+
 resource "aws_iam_role" "execution_role" {
   name               = "${var.name}-${var.environment}-exec-role"
   description        = "Execution role for ${var.name}-${var.environment}"
@@ -239,7 +264,7 @@ data "aws_iam_policy_document" "ecs_assume" {
 
     principals {
       type        = "Service"
-      identifiers = ["ecs.amazonaws.com"]
+      identifiers = ["ecs-tasks.amazonaws.com"]
     }
   }
 }
@@ -303,6 +328,7 @@ resource "aws_ecs_service" "fredbet-service" {
   task_definition                   = aws_ecs_task_definition.fredbet-td.id
   health_check_grace_period_seconds = 15
   launch_type                       = "FARGATE"
+  iam_role                          = aws_iam_role.svc.arn
 
   network_configuration {
     subnets          = [aws_subnet.private1.id, aws_subnet.private2.id]
