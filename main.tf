@@ -209,13 +209,14 @@ resource "aws_lb_target_group" "alb-tg" {
   target_type = "ip"
 
   health_check {
-    healthy_threshold   = "3"
-    interval            = "5"
+    healthy_threshold   = "2"
+    unhealthy_threshold = "10"
+    timeout             = "60"
+    interval            = "70"
     protocol            = "HTTP"
     matcher             = "200"
-    timeout             = "3"
     path                = "/actuator/health"
-    unhealthy_threshold = "2"
+    port                = "traffic-port"
   }
 
   stickiness {
@@ -238,7 +239,7 @@ data "aws_iam_policy_document" "ecs_assume" {
 
     principals {
       type        = "Service"
-      identifiers = ["ecs-tasks.amazonaws.com"]
+      identifiers = ["ecs.amazonaws.com"]
     }
   }
 }
@@ -300,7 +301,7 @@ resource "aws_ecs_service" "fredbet-service" {
   cluster                           = aws_ecs_cluster.cluster.id
   desired_count                     = 1
   task_definition                   = aws_ecs_task_definition.fredbet-td.id
-  health_check_grace_period_seconds = 30
+  health_check_grace_period_seconds = 15
   launch_type                       = "FARGATE"
 
   network_configuration {
